@@ -1,0 +1,218 @@
+use super::{
+    editorcommand::{Direction, EditorCommand},
+    terminal::{Size, Terminal, Coords}
+};
+
+mod buffer;
+use buffer::Buffer;
+mod line;
+
+const NAME: &str = env!("CARGO_PKG_NAME");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub struct View {
+    buffer: Buffer,
+    needs_redraw: bool,
+    text_location: Location,
+    scroll_offset: Coords,
+    size: Size,
+}
+
+#[derive(Copy, Clone, Default)]
+pub struct Location {
+    pub grapheme_index: usize,
+    pub line_index: usize,
+}
+
+impl View {
+    pub fn render(&mut self) {
+        if !self.needs_redraw {return;}
+        let Size {height, width} = self.size;
+        if height == 0 || width == 0 {return;}
+        if self.buffer.is_empty() {
+            self.render_welcome_screen();
+        } else {
+            self.render_buffer();
+        }
+        self.needs_redraw = false;
+    }
+
+    pub fn handle_command(&mut self, command: EditorCommand) {
+        match command {
+            EditorCommand::Resize(size) => self.resize(size),
+            EditorCommand::Move(direction) => self.move_point(direction),
+            EditorCommand::Quit => {},
+        }
+    }
+
+    pub fn load(&mut self, filename: &str) {
+        if let Ok(buffer) = Buffer::load(filename) {
+            self.buffer = buffer;
+        }
+        self.needs_redraw = true;
+    }
+
+    fn render_line(row: usize, line_text: &str) {
+        let result = Terminal::print_row(row, line_text);
+        debug_assert!(result.is_ok(), "Failed to render line");
+    }
+
+    fn render_buffer(&self) {
+        let Size {height, width} = self.size;
+        for row in 0..height {
+            if let Some(e) = self.buffer.text.get(row.saturating_add(self.scroll_offset.row)) {
+                let xbound1 = self.scroll_offset.col;
+                let xbound2 = self.scroll_offset.col + width;
+                Self::render_line(row, &e.get_visible_graphemes(xbound1..xbound2));
+            } else  {
+                Self::render_line(row, "~");
+            }
+        }
+    }
+
+    fn render_welcome_screen(&self) {
+        let Size {height, ..} = self.size;
+        for row in 0..height {
+            let _ = Terminal::clear_line();
+            if row == height / 2 {
+                self.draw_welcome_message();
+            } else  {
+                Self::draw_empty_row();
+            }
+            if row.saturating_add(1) < height {
+                let _ = Terminal::move_caret_to(Coords {row: row+1, col: 0} );
+            }
+        }
+    }
+
+    fn draw_empty_row() {
+        let _ = Terminal::print("~");
+    }
+
+    fn draw_welcome_message(&self) {
+        let mut welcome_msg = format!("{NAME} version {VERSION}");
+        let width: usize = self.size.width;
+        let len = welcome_msg.len(); 
+        #[allow(clippy::integer_division)]
+        let padding = (width.saturating_sub(len)) / 2;
+        let spaces = " ".repeat(padding.saturating_sub(1));
+        welcome_msg = format!("~{spaces}{welcome_msg}");
+        welcome_msg.truncate(width);
+        let _ = Terminal::print(&welcome_msg);
+    }
+
+    fn resize(&mut self, size: Size){
+        self.size = size;
+        self.update_scroll_offset();
+        self.needs_redraw = true;                
+    }
+
+    #[allow(unused_variables)]
+    #[allow(unused_self)]
+    #[allow(dead_code)]
+    pub fn scroll(&mut self, direction: Direction) {}
+
+    pub fn move_point(&mut self, direction: Direction) {
+        let Location {mut x, mut y} = self.location;
+        let Size {width, height} = self.size;
+        match direction {
+            Direction::Left => {
+                x = x.saturating_sub(1);
+            },
+            Direction::Right => {
+        let line_width = self
+            .buffer
+            .lines
+            .get(self.text_location.line_index)
+            .map_or(0, Line::grapheme_count);
+        if self.text_location.grapheme_index < line_width {
+            self.text_location.grapheme_index += 1;
+        }
+                let Some(cur_line) = self.buffer.text.get(y) else {panic!()};
+                if x.saturating_add(1) < cur_line.len(){
+                    x = x.saturating_add(1);
+                }
+            },
+            Direction::Up => {
+                y = y.saturating_sub(1);
+                let Some(cur_line) = self.buffer.text.get(y) else {panic!()};
+                if cur_line.len()==0 {
+                    x = 0; 
+                } else if cur_line.len() <= x {
+                    x = cur_line.len()-1;
+                }
+            },
+            Direction::Down=> {
+                if let Some(cur_line) = self.buffer.text.get(y.saturating_add(1)) {
+                    y = y.saturating_add(1);
+                    if cur_line.len() == 0{
+                        x = 0;
+                    } else if cur_line.len() <= x {
+                        x = cur_line.len()-1;
+                    }
+                }
+            },
+            Direction::PageUp => {
+                y = 0;
+            },
+            Direction::PageDown => {
+                y = width.saturating_sub(1);
+            },
+            Direction::Home => {
+                x = 0;
+            },
+            Direction::End => {
+                x = height.saturating_sub(1);
+            },
+        }
+        self.location = Location {x, y};
+        self.update_scroll_offset();
+    }
+
+    pub fn update_scroll_offset(&mut self) {
+        let Location {x, y} = self.location;
+        let Size {width, height} = self.size;
+        if x >= width+self.scroll_offset.x {
+            self.scroll_offset.x += 1;
+            self.needs_redraw = true;                
+        }
+        if y >= height+self.scroll_offset.y {
+            self.scroll_offset.y += 1;
+            self.needs_redraw = true;       
+        }
+        if x < self.scroll_offset.x {
+            self.scroll_offset.x = x;
+            self.needs_redraw = true;
+        }
+        if y < self.scroll_offset.y { 
+            self.scroll_offset.y = y;
+            self.needs_redraw = true;
+        }
+    }
+
+    pub fn get_position(&self) -> Coords {
+        self.text_location_to_position()
+            .saturating_sub(self.scroll_offset)
+    }
+
+    pub fn text_location_to_position(&self) -> Coords {
+        let row = self.text_location.line_index;
+        let col = self.buffer.lines.get(row).map_or(0, |line| {
+            line.width_until(self.text_location.grapheme_index)
+        });
+        Coords {col, row}
+    }
+
+}
+
+impl Default for View {
+    fn default() -> Self {
+        Self {
+            buffer: Buffer::default(),
+            needs_redraw: true,
+            size: Terminal::size().unwrap_or_default(),
+            location: Location::default(),
+            scroll_offset: Location::default(),
+        }
+    }
+}
