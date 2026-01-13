@@ -15,7 +15,7 @@ pub enum Direction {
 }
 
 pub enum EditorCommand {
-    Move(Direction),
+    Key(char),
     Resize(Size),
     Quit,
     Other,
@@ -28,19 +28,8 @@ impl TryFrom<Event> for EditorCommand {
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => match (code, modifiers) {
-                (KeyCode::Char('q'), KeyModifiers::CONTROL) => Ok(Self::Quit),
-                (KeyCode::Left | KeyCode::Char('h'), KeyModifiers::NONE) =>
-                    Ok(Self::Move(Direction::Left)),
-                (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) =>
-                    Ok(Self::Move(Direction::Up)),
-                (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) =>
-                    Ok(Self::Move(Direction::Down)),
-                (KeyCode::Right | KeyCode::Char('l'), KeyModifiers::NONE) =>
-                    Ok(Self::Move(Direction::Right)),
-                (KeyCode::PageDown, _) => Ok(Self::Move(Direction::PageDown)),
-                (KeyCode::PageUp, _) => Ok(Self::Move(Direction::PageUp)),
-                (KeyCode::Home, _) => Ok(Self::Move(Direction::Home)),
-                (KeyCode::End, _) => Ok(Self::Move(Direction::End)),
+                (KeyCode::Char, KeyModifiers::NONE) => 
+                    if let KeyCode::Char(c) = code {Ok(Self::Key(c))},
                 _ => Ok(Other),
             },
             Event::Resize(width_u16, height_u16) => {

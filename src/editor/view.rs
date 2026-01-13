@@ -52,11 +52,15 @@ impl View {
         //faire en sorte que bmode soit pris en compte (ne peut pas etre argument de tryfrom)
         //peut etre retirer le editorcommandmove et remplacer par lettre normale 
         //puis mettre move sur view plutot que sur editorcommand
-        match EditorCommand::try_from(event, bmode) {
+        match EditorCommand::try_from(event) {
             match bmode {
                 Normal => match command {
                     EditorCommand::Resize(size) => self.resize(size),
-                    EditorCommand::Move(direction) => self.move_text_location(&direction),
+                    EditorCommand::Key(c) => {
+                        match c {
+                            'h' => self.move
+                        }
+                    }
                     _ => {},
                 },
                 Insert => match command {
