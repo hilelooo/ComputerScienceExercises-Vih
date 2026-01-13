@@ -1,7 +1,6 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use std::convert::TryFrom;
 use super::terminal::Size;
-use super::view::Bmode;
 
 pub enum Direction {
     PageUp,
@@ -28,9 +27,9 @@ impl TryFrom<Event> for EditorCommand {
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => match (code, modifiers) {
-                (KeyCode::Char, KeyModifiers::NONE) => 
+                (KeyCode::Char(_), KeyModifiers::NONE) => 
                     if let KeyCode::Char(c) = code {Ok(Self::Key(c))},
-                _ => Ok(Other),
+                _ => Ok(Self::Other),
             },
             Event::Resize(width_u16, height_u16) => {
                 #[allow(clippy::as_conversions)]

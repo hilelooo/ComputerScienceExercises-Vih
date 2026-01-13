@@ -1,4 +1,4 @@
-use crossterm::Event;
+use crossterm::event::Event;
 use std::cmp::min;
 use super::{
     editorcommand::{Direction, EditorCommand},
@@ -52,21 +52,22 @@ impl View {
         //faire en sorte que bmode soit pris en compte (ne peut pas etre argument de tryfrom)
         //peut etre retirer le editorcommandmove et remplacer par lettre normale 
         //puis mettre move sur view plutot que sur editorcommand
-        match EditorCommand::try_from(event) {
-            match bmode {
-                Normal => match command {
+        match self.bmode {
+            Normal => {
+                match EditorCommand::try_from(event) {
                     EditorCommand::Resize(size) => self.resize(size),
                     EditorCommand::Key(c) => {
                         match c {
-                            'h' => self.move
+                            'h' => self.move_text_location(Direction::Left),
+                            'j' => self.move_text_location(Direction::Down),
+                            'k' => self.move_text_location(Direction::Up),
+                            'l' => self.move_text_location(Direction::Right),
                         }
                     }
                     _ => {},
-                },
-                Insert => match command {
-                    EditorCommand::AppendChar(c) => //TODO
                 }
-            }
+            },
+            Insert => {}
         }
     }
 
@@ -262,7 +263,7 @@ impl Default for View {
             size: Terminal::size().unwrap_or_default(),
             text_location: Location::default(),
             scroll_offset: Coords::default(),
-            bmode: Normal,
+            bmode: Bmode::Normal,
         }
     }
 }
