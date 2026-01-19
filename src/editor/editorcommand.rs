@@ -3,10 +3,6 @@ use std::convert::TryFrom;
 use super::terminal::Size;
 
 pub enum Direction {
-    PageUp,
-    PageDown,
-    Home,
-    End,
     Up,
     Left,
     Right,
@@ -16,7 +12,7 @@ pub enum Direction {
 pub enum EditorCommand {
     Key(char),
     Resize(Size),
-    Quit,
+    Escape,
     Other,
 }
 
@@ -27,8 +23,9 @@ impl TryFrom<Event> for EditorCommand {
             Event::Key(KeyEvent {
                 code, modifiers, ..
             }) => match (code, modifiers) {
-                (KeyCode::Char(_), KeyModifiers::NONE) => 
-                    if let KeyCode::Char(c) = code {Ok(Self::Key(c))},
+                (KeyCode::Char(_), KeyModifiers::NONE | KeyModifiers::SHIFT) => 
+                    if let KeyCode::Char(c) = code {Ok(Self::Key(c))} else {Ok(Self::Other)},
+                (KeyCode::Esc, _) => Ok(Self::Escape),
                 _ => Ok(Self::Other),
             },
             Event::Resize(width_u16, height_u16) => {

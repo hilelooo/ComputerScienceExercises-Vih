@@ -8,7 +8,6 @@ mod editorcommand;
 
 use view::View;
 use terminal::Terminal;
-use editorcommand::EditorCommand;
 
 
 pub struct Editor {
@@ -65,27 +64,7 @@ impl Editor {
             if self.view.handle_command(event) {
                 self.should_quit = true;
             }
-            /*
-            match EditorCommand::try_from(event, bmode) {
-                Ok(command) => {
-                    if matches!(command, EditorCommand::Quit) {
-                        self.should_quit = true;
-                    } else {
-                        self.view.handle_command(command);
-                    }
-                }
-                Err(err) => {
-                    #[cfg(debug_assertions)]
-                    {
-                        panic!("couldn't handle command: {err}");
-                    }
-                }
-            }*/
-        } else {
-            panic!("recieved and disacrded event");
         }
-
-
     }
 
     fn refresh_screen(&mut self){

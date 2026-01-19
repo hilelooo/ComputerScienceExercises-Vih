@@ -49,26 +49,45 @@ impl View {
     }
 
     pub fn handle_command(&mut self, event: Event) -> bool {
-        //faire en sorte que bmode soit pris en compte (ne peut pas etre argument de tryfrom)
-        //peut etre retirer le editorcommandmove et remplacer par lettre normale 
-        //puis mettre move sur view plutot que sur editorcommand
         match self.bmode {
-            Normal => {
+            Bmode::Normal => {
                 match EditorCommand::try_from(event) {
-                    EditorCommand::Resize(size) => self.resize(size),
-                    EditorCommand::Key(c) => {
+                    Ok(EditorCommand::Resize(size)) => self.resize(size),
+                    Ok(EditorCommand::Key(c)) => {
                         match c {
-                            'h' => self.move_text_location(Direction::Left),
-                            'j' => self.move_text_location(Direction::Down),
-                            'k' => self.move_text_location(Direction::Up),
-                            'l' => self.move_text_location(Direction::Right),
+                            'h' => self.move_text_location(&Direction::Left),
+                            'j' => self.move_text_location(&Direction::Down),
+                            'k' => self.move_text_location(&Direction::Up),
+                            'l' => self.move_text_location(&Direction::Right),
+                            'i' => self.bmode = Bmode::Insert,
+                            _ => {},
                         }
                     }
                     _ => {},
                 }
             },
-            Insert => {}
+            Bmode::Insert => {
+                match EditorCommand::try_from(event) {
+                    Ok(EditorCommand::Escape) => self.bmode = Bmode::Normal,
+                    Ok(EditorCommand::Key(c)) => self.insert_char(c),
+                    _ => {},
+                }
+            },
+            _ => {}
         }
+        false
+    }
+
+    fn insert_char(&mut self, c: char) {
+        let old_len = self.buffer.lines.get(self.text_location.line_index)
+            .map_or(0, Line::grapheme_count);
+        self.buffer.insert_char(c, self.text_location);
+        let len = self.buffer.lines.get(self.text_location.line_index)
+            .map_or(0, Line::grapheme_count);
+        if len-old_len > 0 {
+            self.move_right();
+        }
+        self.needs_redraw = true;
     }
 
     pub fn load(&mut self, filename: &str) {
@@ -183,7 +202,7 @@ impl View {
         let col = self.buffer.lines.get(row).map_or(0, |line| {
             line.width_until(self.text_location.grapheme_index)
         });
-        Coords {col, row}
+        Coords {row, col}
     }
 
      fn move_text_location(&mut self, direction: &Direction) {
@@ -193,10 +212,6 @@ impl View {
             Direction::Down => self.move_down(1),
             Direction::Left => self.move_left(),
             Direction::Right => self.move_right(),
-            Direction::PageUp => self.move_up(height.saturating_sub(1)),
-            Direction::PageDown => self.move_down(height.saturating_sub(1)),
-            Direction::Home => self.move_to_start_of_line(),
-            Direction::End => self.move_to_end_of_line(),
         }
         self.scroll_text_location_into_view();
     }
