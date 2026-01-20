@@ -3,16 +3,27 @@ use std::{
     io::Error,
     panic::{set_hook,take_hook},};
 mod terminal;
+mod statusbar;
 mod view;
 mod editorcommand;
 
-use view::View;
+use statusbar::StatusBar;
+use view::{Bmode, View};
 use terminal::Terminal;
 
+#[derive(Default, Eq, PartialEq, Debug)]
+pub struct DocumentStatus {
+    total_lines: usize,
+    current_line_index: usize,
+    is_modified: bool,
+    filename: String,
+    bmode_string: String
+}
 
 pub struct Editor {
     should_quit:  bool,
     view: View,
+    statusbar: StatusBar,
 }
 
 impl Editor {
@@ -30,7 +41,8 @@ impl Editor {
         }
         Ok(Self {
             should_quit: false,
-            view
+            view,
+            statusbar: StatusBar::new(),
         })
     }
 
@@ -49,6 +61,8 @@ impl Editor {
                     }
                 }
             }
+            let status= self.view.get_status();
+            self.statusbar.update_status(status);
         }
     }
 
@@ -70,6 +84,9 @@ impl Editor {
     fn refresh_screen(&mut self){
         let _ = Terminal::hide_caret();
         self.view.render();
+        let status= self.view.get_status();
+        self.statusbar.update_status(status);
+        self.statusbar.render();
         let _ = Terminal::move_caret_to(self.view.caret_position());
         let _ = Terminal::show_caret();
         let _ = Terminal::execute();
@@ -80,7 +97,7 @@ impl Drop for Editor {
     fn drop(&mut self) {
         let _ = Terminal::terminate();
         if self.should_quit {
-            let _ = Terminal::print("Goodbye\r\n");
+            let _ = Terminal::print("Goodbye\r\n", None);
         }
     }
 }

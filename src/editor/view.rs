@@ -2,18 +2,21 @@ use crossterm::event::Event;
 use std::cmp::min;
 use super::{
     editorcommand::{Direction, EditorCommand},
-    terminal::{Size, Terminal, Coords}
+    terminal::{Size, Terminal, Coords},
+    DocumentStatus,
 };
 use self::line::Line;
 
 mod buffer;
+mod selection;
+use selection::Selection;
 use buffer::Buffer;
 mod line;
 
 const NAME: &str = env!("CARGO_PKG_NAME");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-enum Bmode {
+pub enum Bmode {
     Normal,
     Insert,
     Visual,
@@ -26,10 +29,11 @@ pub struct View {
     text_location: Location,
     scroll_offset: Coords,
     size: Size,
+    selection: Selection,
     bmode: Bmode,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq, Debug)]
 pub struct Location {
     pub grapheme_index: usize,
     pub line_index: usize,
@@ -52,14 +56,25 @@ impl View {
         match self.bmode {
             Bmode::Normal => {
                 match EditorCommand::try_from(event) {
-                    Ok(EditorCommand::Resize(size)) => self.resize(size),
+                    Ok(EditorCommand::Resize(size)) =>self.resize(size),
+                    Ok(EditorCommand::Up) => self.move_text_location(Direction::Up),
+                    Ok(EditorCommand::Down) => self.move_text_location(Direction::Down),
+                    Ok(EditorCommand::Left) => self.move_text_location(Direction::Left),
+                    Ok(EditorCommand::Right) => self.move_text_location(Direction::Right),
                     Ok(EditorCommand::Key(c)) => {
                         match c {
-                            'h' => self.move_text_location(&Direction::Left),
-                            'j' => self.move_text_location(&Direction::Down),
-                            'k' => self.move_text_location(&Direction::Up),
-                            'l' => self.move_text_location(&Direction::Right),
+                            'h' => self.move_text_location(Direction::Left),
+                            'j' => self.move_text_location(Direction::Down),
+                            'k' => self.move_text_location(Direction::Up),
+                            'l' => self.move_text_location(Direction::Right),
+                            'x' => self.delete(),
+                            'X' => self.backspace(),
+                            's' => self.save(),
                             'i' => self.bmode = Bmode::Insert,
+                            'r' => self.bmode = Bmode::Replace,
+                            'v' => self.start_selection(),
+                            'q' => return true,
+                            'z' => self.center_cursor(),
                             _ => {},
                         }
                     }
@@ -70,12 +85,98 @@ impl View {
                 match EditorCommand::try_from(event) {
                     Ok(EditorCommand::Escape) => self.bmode = Bmode::Normal,
                     Ok(EditorCommand::Key(c)) => self.insert_char(c),
+                    Ok(EditorCommand::Delete) => self.delete(),
+                    Ok(EditorCommand::Backspace) => self.backspace(),
+                    Ok(EditorCommand::Up) => self.move_text_location(Direction::Up),
+                    Ok(EditorCommand::Down) => self.move_text_location(Direction::Down),
+                    Ok(EditorCommand::Left) => self.move_text_location(Direction::Left),
+                    Ok(EditorCommand::Right) => self.move_text_location(Direction::Right),
+                    Ok(EditorCommand::Tab) => {self.insert_char(' ');self.insert_char(' ');},
+                    Ok(EditorCommand::Enter) => self.insert_line(),
                     _ => {},
                 }
             },
-            _ => {}
+            Bmode::Replace => {
+                match EditorCommand::try_from(event) {
+                    Ok(EditorCommand::Escape) => self.bmode = Bmode::Normal,
+                    Ok(EditorCommand::Key(c)) => {self.delete(); self.insert_char(c);},
+                    _ => {},
+                }
+            },
+            Bmode::Visual => {self.needs_redraw = true;
+                match EditorCommand::try_from(event) {
+                    Ok(EditorCommand::Escape) => self.exit_selection(),
+                    Ok(EditorCommand::Up) => self.move_text_location(Direction::Up),
+                    Ok(EditorCommand::Down) => self.move_text_location(Direction::Down),
+                    Ok(EditorCommand::Left) => self.move_text_location(Direction::Left),
+                    Ok(EditorCommand::Right) => self.move_text_location(Direction::Right),
+                    Ok(EditorCommand::Key(c)) => {
+                        match c {
+                            'h' => self.move_text_location(Direction::Left),
+                            'j' => self.move_text_location(Direction::Down),
+                            'k' => self.move_text_location(Direction::Up),
+                            'l' => self.move_text_location(Direction::Right),
+                            _ => {},
+                        }
+                    },
+                    _ => {},
+                }
+            },
         }
         false
+    }
+
+    pub fn get_status(&self) -> DocumentStatus {
+        DocumentStatus {
+            total_lines: self.buffer.lines.len(),
+            current_line_index: self.text_location.line_index,
+            filename: self.buffer.filename.clone(),
+            is_modified: self.buffer.dirty,
+            bmode_string: self.bmode.as_str(),
+        }
+    }
+
+    fn start_selection(&mut self) {
+        self.selection.active = true;
+        self.bmode = Bmode::Visual;
+        self.selection.anchor = self.text_location;
+    }
+
+    fn exit_selection(&mut self) {
+        self.selection.active = false;
+        self.bmode = Bmode::Normal;
+    }
+
+    fn process_selection(&self) -> Option<(Location, Location)> {
+        if !self.selection.active {
+            return None;
+        }
+
+        let (a, b) = (self.selection.anchor, self.text_location);
+
+        if (a.line_index, a.grapheme_index) <= (b.line_index, b.grapheme_index) {
+            Some((a, b))
+        } else {
+            Some((b, a))
+        }
+    }
+
+    fn is_selected(&self, line_index: usize, grapheme_index: usize) -> bool {
+        if let Some((start, end)) = self.process_selection() {
+            (line_index, grapheme_index) >= (start.line_index, start.grapheme_index)
+                && (line_index, grapheme_index) < (end.line_index, end.grapheme_index)
+        } else {
+            false
+        }
+    }
+
+    fn center_cursor(&mut self) {
+        let Size { height, .. } = self.size;
+        if self.text_location.line_index.saturating_sub(self.scroll_offset.row) < height/2 {
+            self.scroll_vertically(self.text_location.line_index.saturating_sub(height/2));
+        } else {
+            self.scroll_vertically(self.text_location.line_index.saturating_add(height/2));
+        }
     }
 
     fn insert_char(&mut self, c: char) {
@@ -85,9 +186,33 @@ impl View {
         let len = self.buffer.lines.get(self.text_location.line_index)
             .map_or(0, Line::grapheme_count);
         if len-old_len > 0 {
-            self.move_right();
+            self.move_text_location(Direction::Right);
         }
         self.needs_redraw = true;
+    }
+
+    fn insert_line(&mut self) {
+        self.buffer.insert_line(self.text_location);
+        self.move_text_location(Direction::Down);
+        self.move_to_start_of_line();
+        self.needs_redraw = true;
+    }
+
+    fn delete(&mut self) {
+        self.buffer.delete(self.text_location);
+        self.needs_redraw = true;
+    }
+
+    fn backspace(&mut self) {
+        if self.text_location.line_index != 0 || self.text_location.grapheme_index != 0{
+            if self.text_location.grapheme_index == 0 {
+                self.move_up(1);
+                self.move_to_end_of_line();
+            } else {
+                self.move_left();
+            }
+            self.delete();
+        }
     }
 
     pub fn load(&mut self, filename: &str) {
@@ -97,8 +222,12 @@ impl View {
         self.needs_redraw = true;
     }
 
-    fn render_line(row: usize, line_text: &str) {
-        let result = Terminal::print_row(row, line_text);
+    pub fn save(&mut self) {
+        let _ = self.buffer.save();
+    }
+
+    fn render_line(row: usize, line_text: &str, selected_text: Option<(usize, usize)>) {
+        let result = Terminal::print_row(row, line_text, selected_text);
         debug_assert!(result.is_ok(), "Failed to render line");
     }
 
@@ -108,9 +237,20 @@ impl View {
             if let Some(e) = self.buffer.lines.get(row.saturating_add(self.scroll_offset.row)) {
                 let xbound1 = self.scroll_offset.col;
                 let xbound2 = self.scroll_offset.col + width;
-                Self::render_line(row, &e.get_visible_graphemes(xbound1..xbound2));
+                let mut firstselec = None;
+                let mut lastselec = None;
+                for col in xbound1..xbound2 {
+                    if self.is_selected(row,col) {
+                        if firstselec.is_none() {
+                            firstselec = Some(col-xbound1);
+                        }
+                        lastselec = Some(col-xbound1);
+                    }
+                }
+                let selected_text: Option<(usize, usize)> = firstselec.zip(lastselec);
+                Self::render_line(row, &e.get_visible_graphemes(xbound1..xbound2), selected_text);
             } else  {
-                Self::render_line(row, "~");
+                Self::render_line(row, "~", None);
             }
         }
     }
@@ -122,16 +262,12 @@ impl View {
             if row == height / 2 {
                 self.draw_welcome_message();
             } else  {
-                Self::draw_empty_row();
+                Self::render_line(row, "~", None);
             }
             if row.saturating_add(1) < height {
                 let _ = Terminal::move_caret_to(Coords {row: row+1, col: 0} );
             }
         }
-    }
-
-    fn draw_empty_row() {
-        let _ = Terminal::print("~");
     }
 
     fn draw_welcome_message(&self) {
@@ -143,7 +279,7 @@ impl View {
         let spaces = " ".repeat(padding.saturating_sub(1));
         welcome_msg = format!("~{spaces}{welcome_msg}");
         welcome_msg.truncate(width);
-        let _ = Terminal::print(&welcome_msg);
+        let _ = Terminal::print(&welcome_msg, None);
     }
 
     fn resize(&mut self, size: Size){
@@ -205,7 +341,7 @@ impl View {
         Coords {row, col}
     }
 
-     fn move_text_location(&mut self, direction: &Direction) {
+     fn move_text_location(&mut self, direction: Direction) {
          let Size { height, .. } = self.size;
         match direction {
             Direction::Up => self.move_up(1),
@@ -272,13 +408,29 @@ impl View {
 
 impl Default for View {
     fn default() -> Self {
+        let terminal_size = Terminal::size().unwrap_or_default();
         Self {
             buffer: Buffer::default(),
             needs_redraw: true,
-            size: Terminal::size().unwrap_or_default(),
+            size: Size {
+                width: terminal_size.width,
+                height: terminal_size.height - 1,
+            },
+            selection: Selection::default(),
             text_location: Location::default(),
             scroll_offset: Coords::default(),
             bmode: Bmode::Normal,
+        }
+    }
+}
+
+impl Bmode {
+    fn as_str(&self) -> String {
+        match self {
+            Bmode::Insert => "Insert".to_string(),
+            Bmode::Normal => "Normal".to_string(),
+            Bmode::Replace => "Replace".to_string(),
+            Bmode::Visual => "Visual".to_string(),
         }
     }
 }

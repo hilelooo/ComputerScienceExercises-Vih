@@ -1,6 +1,6 @@
 use crate::editor::terminal::Coords;
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default,PartialEq)]
 pub struct Location {
     pub x: usize,
     pub y: usize,

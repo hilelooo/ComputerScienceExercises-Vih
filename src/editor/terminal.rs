@@ -46,10 +46,10 @@ impl Terminal {
         Ok(())
     }
 
-    pub fn print_row(row: usize, line_text: &str) -> Result<(), Error> {
+    pub fn print_row(row: usize, line_text: &str, selected_text: Option<(usize,usize)>) -> Result<(), Error> {
         Self::move_caret_to(Coords {row, col:0})?;
         Self::clear_line()?;
-        Self::print(line_text)?;
+        Self::print(line_text, selected_text)?;
         Ok(())
     }
 
@@ -98,8 +98,26 @@ impl Terminal {
         Ok(())
     }
 
-    pub fn print(s : &str) -> Result<(), Error> {
-        queue!(stdout(), style::Print(s))?;
+    pub fn print(s : &str, selected_text: Option<(usize, usize)>) -> Result<(), Error> {
+        match selected_text {
+            None => {
+                queue!(stdout(), style::Print(s))?;
+            }
+            Some((sel_start, sel_end)) => {
+                let (left, rest) = s.split_at(sel_start);
+                // FIXME
+                let (mid, right) = rest.split_at(sel_end - sel_start);
+
+                queue!(stdout(), style::Print(left))?;
+                queue!(
+                    stdout(),
+                    style::SetBackgroundColor(style::Color::DarkBlue),
+                    style::Print(mid),
+                    style::ResetColor
+                )?;
+                queue!(stdout(), style::Print(right))?;
+            }
+        }
         Ok(())
     }
     
