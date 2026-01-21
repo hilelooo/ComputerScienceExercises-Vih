@@ -51,6 +51,14 @@ impl Buffer {
         }
     }
 
+    pub fn insert_text(&mut self, text: String, at: Location) {
+         let mut col = at.grapheme_index;
+         for i in text.chars() {
+             self.insert_char(i,Location {line_index: at.line_index, grapheme_index: col});
+             col +=1;
+         }
+     }
+
     pub fn delete(&mut self, at: Location) {
         if let Some(line) = self.lines.get(at.line_index) {
             if at.grapheme_index >= line.grapheme_count() && self.lines.len() > at.line_index + 1 {
@@ -62,6 +70,12 @@ impl Buffer {
                 self.dirty = true;
                 // normal case
             }
+        }
+    }
+
+    pub fn delete_line(&mut self, line_index: usize, start: usize, end: usize) {
+        for i in start..end { 
+            self.delete(Location {line_index: line_index, grapheme_index: start}); 
         }
     }
 

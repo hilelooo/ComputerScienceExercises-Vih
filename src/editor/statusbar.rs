@@ -49,7 +49,7 @@ impl StatusBar {
              name.to_string()
         };
         let status = format!("{:<width$}{:^width$}{:>width$}",mode,fileinfo,lines_info);
-        let _ = Terminal::print_row(self.position_y, &status, None);
+        let _ = Terminal::print_row(self.position_y, &status);
         self.needs_redraw = false;
     }
 }

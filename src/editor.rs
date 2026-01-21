@@ -97,7 +97,7 @@ impl Drop for Editor {
     fn drop(&mut self) {
         let _ = Terminal::terminate();
         if self.should_quit {
-            let _ = Terminal::print("Goodbye\r\n", None);
+            let _ = Terminal::print(Some("Goodbye\r\n"),None,None);
         }
     }
 }

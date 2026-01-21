@@ -46,11 +46,15 @@ impl Terminal {
         Ok(())
     }
 
-    pub fn print_row(row: usize, line_text: &str, selected_text: Option<(usize,usize)>) -> Result<(), Error> {
+    pub fn complex_print(row: usize, s1: Option<&str>, s2: Option<&str>, s3: Option<&str>) -> Result<(), Error> {
         Self::move_caret_to(Coords {row, col:0})?;
         Self::clear_line()?;
-        Self::print(line_text, selected_text)?;
+        Self::print(s1,s2,s3)?;
         Ok(())
+    }
+    
+    pub fn print_row(row: usize, s: &str) {
+        Self::complex_print(row, Some(s), None, None);
     }
 
     pub fn enter_alternate() -> Result<(), Error>{
@@ -98,25 +102,16 @@ impl Terminal {
         Ok(())
     }
 
-    pub fn print(s : &str, selected_text: Option<(usize, usize)>) -> Result<(), Error> {
-        match selected_text {
-            None => {
-                queue!(stdout(), style::Print(s))?;
-            }
-            Some((sel_start, sel_end)) => {
-                let (left, rest) = s.split_at(sel_start);
-                // FIXME
-                let (mid, right) = rest.split_at(sel_end - sel_start);
-
-                queue!(stdout(), style::Print(left))?;
-                queue!(
-                    stdout(),
-                    style::SetBackgroundColor(style::Color::DarkBlue),
-                    style::Print(mid),
-                    style::ResetColor
-                )?;
-                queue!(stdout(), style::Print(right))?;
-            }
+    pub fn print(s1: Option<&str>, s2: Option<&str>, s3: Option<&str>) -> Result<(), Error> {
+        if let Some(s) = s1 {queue!(stdout(), style::Print(s))?;}
+        if let Some(s) = s2 {queue!(
+            stdout(),
+            style::SetBackgroundColor(style::Color::DarkBlue),
+            style::Print(s),
+            style::ResetColor
+        )?;}
+        if let Some(s) = s3 {
+        queue!(stdout(), style::Print(s))?;
         }
         Ok(())
     }

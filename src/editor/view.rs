@@ -1,3 +1,4 @@
+use arboard::Clipboard;
 use crossterm::event::Event;
 use std::cmp::min;
 use super::{
@@ -31,6 +32,7 @@ pub struct View {
     size: Size,
     selection: Selection,
     bmode: Bmode,
+    clipboard: String,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Debug)]
@@ -75,6 +77,10 @@ impl View {
                             'v' => self.start_selection(),
                             'q' => return true,
                             'z' => self.center_cursor(),
+                            'p' => self.paste(),
+                            'o' => {self.move_to_end_of_line();self.insert_line();self.bmode = Bmode::Insert;},
+                            'O' => {self.move_up(1); self.insert_line();self.bmode = Bmode::Insert;},
+                            '>' => self.single_indent(),
                             _ => {},
                         }
                     }
@@ -112,10 +118,14 @@ impl View {
                     Ok(EditorCommand::Right) => self.move_text_location(Direction::Right),
                     Ok(EditorCommand::Key(c)) => {
                         match c {
+                            'y' => self.copy_and_exit(),
                             'h' => self.move_text_location(Direction::Left),
                             'j' => self.move_text_location(Direction::Down),
                             'k' => self.move_text_location(Direction::Up),
                             'l' => self.move_text_location(Direction::Right),
+                            'd' => self.cut(),
+                            'p' => self.paste(),
+                            '>' => self.multi_indent(),
                             _ => {},
                         }
                     },
@@ -147,6 +157,33 @@ impl View {
         self.bmode = Bmode::Normal;
     }
 
+    fn single_indent(&mut self) {
+        let row = self.text_location.line_index;
+        self.indent(row);
+    }
+
+    fn indent(&mut self, row: usize) {
+        let oldcol = self.text_location.grapheme_index;
+        let oldrow = self.text_location.line_index;
+        self.text_location.grapheme_index = 0;
+        self.text_location.line_index = row;
+        self.insert_char(' ');
+        self.insert_char(' ');
+        self.text_location.grapheme_index = oldcol;
+        self.text_location.line_index = oldrow;
+    }
+
+    fn multi_indent(&mut self) {
+        let col = self.text_location.grapheme_index;
+        let row = self.text_location.line_index;
+        if let Some((start, end)) = self.process_selection() {
+        for i in start.line_index..=end.line_index {
+            self.indent(i);
+        }
+        }
+        self.exit_selection();
+    }
+
     fn process_selection(&self) -> Option<(Location, Location)> {
         if !self.selection.active {
             return None;
@@ -168,6 +205,105 @@ impl View {
         } else {
             false
         }
+    }
+
+    fn selected_text(&self) -> Option<String> {
+        let (start, end) = self.process_selection()?;
+
+        let mut out = String::new();
+
+        for row in start.line_index..=end.line_index {
+            let line = self.buffer.lines.get(row)?;
+
+            let g_start = if row == start.line_index { start.grapheme_index } else { 0 };
+            let g_end   = if row == end.line_index   { end.grapheme_index }   else { self.buffer.lines.get(row).map_or(0, Line::grapheme_count) };
+
+            out.push_str(&line.get_visible_graphemes(g_start..g_end));
+
+            if row != end.line_index {
+                out.push('\n');
+            }
+        }
+
+        Some(out)
+    }
+
+    fn copy(&mut self) {
+        let sel = self.selected_text();
+        match sel {
+            Some(text) => {
+                self.clipboard = text.clone();
+            },
+            None => {}
+        }
+    }
+
+    fn copy_and_exit(&mut self) {
+        self.copy();
+        self.exit_selection();
+    }
+
+    fn cut(&mut self) {
+        self.copy();
+        self.delete_selection();
+    }
+
+    fn delete_selection(&mut self) {
+        let (start, end) = match self.process_selection() {
+            Some (r) => r,
+            None => return,
+        };
+
+        if start.line_index == end.line_index {
+            self.buffer.delete_line(start.line_index, start.grapheme_index, end.grapheme_index);
+        } else {
+            self.buffer.delete_line(end.line_index, 0, end.grapheme_index);
+            let tail = Line::from(&self.buffer.lines[end.line_index].get_visible_graphemes(0..self.buffer.lines[end.line_index].grapheme_count()));
+            for _ in start.line_index+1..=end.line_index {
+                self.buffer.lines.remove(start.line_index+1);
+            }
+            self.buffer.delete_line(start.line_index, start.grapheme_index, self.buffer.lines[start.line_index].grapheme_count());
+            self.buffer.lines[start.line_index].append(&tail);
+        }
+        self.exit_selection();
+    }
+
+    fn insert_text(&mut self, text: String) {
+        if self.selection.active {
+            self.delete_selection();
+        }
+
+        let row = self.text_location.line_index;
+        let col = self.text_location.grapheme_index;
+
+        let mut lines = text.lines();
+
+        if let Some(first) = lines.next() {
+            let tail = Line::from(&self.buffer.lines[row].get_visible_graphemes(col..self.buffer.lines[row].grapheme_count()));
+            self.buffer.delete_line(row, col, self.buffer.lines[row].grapheme_count());
+            self.buffer.insert_text(String::from(first), Location{line_index: row, grapheme_index: col});
+
+            let mut insert_row = row + 1;
+
+            for l in lines {
+                self.buffer.insert_line(Location {line_index: insert_row, grapheme_index: 0});
+                self.buffer.insert_text(String::from(l), Location{line_index: insert_row, grapheme_index: 0});
+            }
+
+            self.buffer.lines[insert_row -1].append(&tail);
+            self.text_location = Location {
+                line_index: insert_row -1, 
+                grapheme_index: col,
+            }
+        }
+        self.needs_redraw = true;
+    }
+
+    fn paste(&mut self) {
+        let text = self.clipboard.clone();
+
+        self.insert_text(text);
+        self.exit_selection();
     }
 
     fn center_cursor(&mut self) {
@@ -226,8 +362,12 @@ impl View {
         let _ = self.buffer.save();
     }
 
-    fn render_line(row: usize, line_text: &str, selected_text: Option<(usize, usize)>) {
-        let result = Terminal::print_row(row, line_text, selected_text);
+    fn render_line(row: usize, line_text: &str) {
+        Self::complex_render(row, Some(line_text), None, None);
+    }
+
+    fn complex_render(row: usize, s1: Option<&str>, s2: Option<&str>, s3: Option<&str>) {
+        let result = Terminal::complex_print(row, s1, s2, s3);
         debug_assert!(result.is_ok(), "Failed to render line");
     }
 
@@ -244,13 +384,30 @@ impl View {
                         if firstselec.is_none() {
                             firstselec = Some(col-xbound1);
                         }
-                        lastselec = Some(col-xbound1);
+                        lastselec = Some(col-xbound1+1);
                     }
                 }
-                let selected_text: Option<(usize, usize)> = firstselec.zip(lastselec);
-                Self::render_line(row, &e.get_visible_graphemes(xbound1..xbound2), selected_text);
+                let (left, mid, right) = match firstselec {
+                    None => (Some(e.get_visible_graphemes(xbound1..xbound2)), None, None),
+                    Some(a) => {
+                        match lastselec {
+                            Some(b) => {
+                            let left = e.get_visible_graphemes(xbound1..a);
+                            let mid = e.get_visible_graphemes(a..b);
+                            let right = e.get_visible_graphemes(b..xbound2);
+                            (
+                                if left.is_empty() { None } else { Some(left) },
+                                if mid.is_empty()  { None } else { Some(mid) },
+                                if right.is_empty(){ None } else { Some(right) },
+                            )
+                            },
+                            _ => (None,None,None) // never happens
+                        }
+                    }
+                };
+                Self::complex_render(row, left.as_deref(), mid.as_deref(), right.as_deref());
             } else  {
-                Self::render_line(row, "~", None);
+                Self::render_line(row, "~");
             }
         }
     }
@@ -262,7 +419,7 @@ impl View {
             if row == height / 2 {
                 self.draw_welcome_message();
             } else  {
-                Self::render_line(row, "~", None);
+                Self::render_line(row, "~");
             }
             if row.saturating_add(1) < height {
                 let _ = Terminal::move_caret_to(Coords {row: row+1, col: 0} );
@@ -279,7 +436,7 @@ impl View {
         let spaces = " ".repeat(padding.saturating_sub(1));
         welcome_msg = format!("~{spaces}{welcome_msg}");
         welcome_msg.truncate(width);
-        let _ = Terminal::print(&welcome_msg, None);
+        let _ = Terminal::print(Some(&welcome_msg), None, None);
     }
 
     fn resize(&mut self, size: Size){
@@ -420,6 +577,7 @@ impl Default for View {
             text_location: Location::default(),
             scroll_offset: Coords::default(),
             bmode: Bmode::Normal,
+            clipboard: String::default(),
         }
     }
 }
